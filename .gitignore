@@ -1,0 +1,21 @@
+# Environments
+.venv/
+venv/
+
+# VS Code / Visual Studio
+.vscode/
+.vs/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+
+# OS files
+.DS_Store
+
+# Large datasets
+data/*.json
+data/*.jsonl
