@@ -34,34 +34,44 @@ class HybridRecommender:
         if self.interactions is None or self.products is None:
             raise ValueError("Call prepare_data() first!")
         print("✅ Hybrid Model ready (both CF and Content-Based are already trained)")
-    def recommend(self, user_id, n=10):
-        """Generate hybrid recommendations - prioritizes CF for similar users"""
+    def recommend(self, user_id, n=10, unhide_items=None):
+        """Generate hybrid recommendations - prioritizes CF for similar users
+
+        unhide_items: items to keep eligible for recommendation even though the
+        user rated them, and to exclude from the content-based seed set (used by
+        held-out evaluation to test whether a hidden item gets recommended).
+        """
+        unhide_items = unhide_items or set()
         user_ratings = self.interactions[self.interactions['user_id'] == user_id]
-        
+
         if user_ratings.empty:
             return []
-        
+
         # Get CF recommendations (primary signal)
         try:
-            cf_recs = self.cf_model.get_top_n_recommendations(user_id, n=n*2)
+            cf_recs = self.cf_model.get_top_n_recommendations(user_id, n=n*2, unhide_items=unhide_items)
         except:
             cf_recs = []
-        
+
         all_candidates = {}
         cf_scores = defaultdict(float)
         content_scores = defaultdict(float)
-        
+
         # Add CF recommendations with HIGH weight (70%)
         for rank, (item_id, cf_score) in enumerate(cf_recs, 1):
             all_candidates[item_id] = cf_score
             cf_scores[item_id] = cf_score
-        
+
         # Add content-based recommendations (secondary signal, 30%)
-        seed_products = user_ratings[user_ratings['rating'] >= 4.0]['product_id'].tolist()
-        
+        # Held-out items are excluded from the seed set - using a hidden item as
+        # its own seed would trivially "recommend" it back via self-similarity.
+        seed_products = user_ratings[
+            (user_ratings['rating'] >= 4.0) & (~user_ratings['product_id'].isin(unhide_items))
+        ]['product_id'].tolist()
+
         if len(seed_products) == 0:
-            seed_products = user_ratings['product_id'].tolist()
-        
+            seed_products = user_ratings[~user_ratings['product_id'].isin(unhide_items)]['product_id'].tolist()
+
         for user_product in seed_products:
             try:
                 similar_items = self.content_model.get_similar_products(user_product, top_n=20)
@@ -84,9 +94,9 @@ class HybridRecommender:
                 self.content_weight * content_score
             )
         
-        # Filter out already rated products
+        # Filter out already rated products (except any held-out items being tested)
         if self.interactions is not None:
-            user_rated = set(user_ratings['product_id'].tolist())
+            user_rated = set(user_ratings['product_id'].tolist()) - unhide_items
             final_scores = {k: v for k, v in final_scores.items() if k not in user_rated}
         
         # Sort by score
@@ -111,51 +121,75 @@ class HybridRecommender:
                 category_counts[category] += 1
         
         return recommendations
-    def evaluate(self):
-        """Evaluate hybrid model"""
-        print("📊 Evaluating Hybrid Model...")
-        
-        # Get unique users from interactions
+    def evaluate(self, n_eval_users=100, k=5, held_out_fraction=0.3, seed=42):
+        """Evaluate hybrid model using held-out testing.
+
+        For each sampled user, a fraction of their highly-rated (>=4.0) items
+        is hidden from the exclusion filter that normally keeps already-rated
+        items out of the recommendation list. Recommendations are then
+        generated as if those items were never rated, and we check whether
+        the model actually surfaces them - the standard way to test a
+        recommender without the answer being trivially excluded by
+        construction (which is what the previous version did: it measured
+        overlap with already-rated items that recommend() always filters
+        out, so precision/recall were guaranteed to be 0).
+
+        Caveat: the CF model itself was fit on the full interaction set
+        (including the held-out ratings) to serve predictions, so this is a
+        simplified/offline-style evaluation rather than a fully leakage-free
+        one - a fully rigorous version would retrain CF per fold.
+        """
+        print("📊 Evaluating Hybrid Model (held-out)...")
+        rng = np.random.RandomState(seed)
+
         users = self.interactions['user_id'].unique()
-        
-        # Calculate metrics
-        precision_sum = 0
-        recall_sum = 0
-        auc_sum = 0
+        if len(users) > n_eval_users:
+            users = rng.choice(users, size=n_eval_users, replace=False)
+
+        precision_sum = 0.0
+        recall_sum = 0.0
+        hit_rate_sum = 0.0
         count = 0
-        
-        for user in users[:100]:  # Sample 100 users for evaluation
+
+        for user in users:
             try:
-                recommendations = self.recommend(user, n=5)
-                
-                if len(recommendations) > 0:
-                    # Get user's rated products
-                    user_ratings = self.interactions[self.interactions['user_id'] == user]
-                    highly_rated = set(user_ratings[user_ratings['rating'] >= 4.0]['product_id'].tolist())
-                    
-                    rec_items = set([r[0] for r in recommendations])
-                    
-                    if len(highly_rated) > 0:
-                        precision = len(rec_items & highly_rated) / len(rec_items) if len(rec_items) > 0 else 0
-                        recall = len(rec_items & highly_rated) / len(highly_rated)
-                        auc = min(1.0, precision + recall) / 2
-                        
-                        precision_sum += precision
-                        recall_sum += recall
-                        auc_sum += auc
-                        count += 1
+                user_ratings = self.interactions[self.interactions['user_id'] == user]
+                highly_rated = user_ratings[user_ratings['rating'] >= 4.0]['product_id'].tolist()
+
+                # Need at least 2 liked items: one to hold out, one left as a
+                # real signal for CF/content-based to work from.
+                if len(highly_rated) < 2:
+                    continue
+
+                n_hold_out = max(1, int(len(highly_rated) * held_out_fraction))
+                held_out = set(rng.choice(highly_rated, size=n_hold_out, replace=False))
+
+                recommendations = self.recommend(user, n=k, unhide_items=held_out)
+                rec_items = set(r[0] for r in recommendations)
+                hits = rec_items & held_out
+
+                if len(rec_items) > 0:
+                    precision = len(hits) / len(rec_items)
+                    recall = len(hits) / len(held_out)
+                    hit_rate = 1.0 if hits else 0.0
+
+                    precision_sum += precision
+                    recall_sum += recall
+                    hit_rate_sum += hit_rate
+                    count += 1
             except:
                 continue
-        
+
         if count == 0:
             return 0.0, 0.0, 0.0
-        
+
         precision = precision_sum / count
         recall = recall_sum / count
-        auc = auc_sum / count
-        
-        print(f" Precision@5: {precision:.4f}")
-        print(f" Recall@5: {recall:.4f}")
-        print(f" AUC: {auc:.4f}")
-        
-        return precision, recall, auc
+        hit_rate = hit_rate_sum / count
+
+        print(f" Precision@{k}: {precision:.4f}")
+        print(f" Recall@{k}: {recall:.4f}")
+        print(f" HitRate@{k}: {hit_rate:.4f}  (fraction of users with >=1 held-out item recommended)")
+        print(f" Evaluated on {count} users (of {len(users)} sampled)")
+
+        return precision, recall, hit_rate

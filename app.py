@@ -129,11 +129,7 @@ def load_models(_interactions, _products, _products_full):
     
     with st.spinner("🔧 Training Content-Based on full catalog..."):
         try:
-            content = ContentBasedRecommender(
-                max_features=3000,
-                use_lsa=True,
-                lsa_components=100
-            )
+            content = ContentBasedRecommender()
             content.fit(_products_full)
             models['content'] = content
            

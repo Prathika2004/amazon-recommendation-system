@@ -19,3 +19,7 @@ __pycache__/
 # Large datasets
 data/*.json
 data/*.jsonl
+
+# Generated outputs (regenerate by running main.py)
+evaluation_report*.txt
+chroma_db/

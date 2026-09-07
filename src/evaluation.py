@@ -25,21 +25,21 @@ class ModelEvaluator:
         return self.results['Collaborative_Filtering']
     
     def evaluate_hybrid(self, model):
-        """Evaluate hybrid model"""
+        """Evaluate hybrid model using held-out precision/recall/hit-rate"""
         print("Evaluating Hybrid Model...")
-        
-        precision, recall, auc = model.evaluate()
-        
+
+        precision, recall, hit_rate = model.evaluate()
+
         self.results['Hybrid'] = {
             'Precision@5': precision,
             'Recall@5': recall,
-            'AUC': auc
+            'HitRate@5': hit_rate
         }
-        
+
         print(f"  Precision@5: {precision:.4f}")
         print(f"  Recall@5: {recall:.4f}")
-        print(f"  AUC: {auc:.4f}")
-        
+        print(f"  HitRate@5: {hit_rate:.4f}")
+
         return self.results['Hybrid']
     
     def evaluate_content_based(self, recommender, products, sample_size=100):

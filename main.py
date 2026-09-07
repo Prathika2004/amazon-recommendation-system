@@ -83,11 +83,7 @@ def main():
     # ═══════════════════════════════════════════════════════════════════
     print_header("STEP 3: CONTENT-BASED FILTERING (FULL CATALOG)")
     
-    content_recommender = ContentBasedRecommender(
-        max_features=15000,
-        use_lsa=True,
-        lsa_components=100
-    )
+    content_recommender = ContentBasedRecommender()
     
     try:
         content_recommender.fit(products_full)  # ← CORRECTED: Using full catalog
@@ -132,17 +128,17 @@ def main():
         )
         hybrid_recommender.prepare_data(interactions, products_full)  # ← CORRECTED: Full catalog
         hybrid_recommender.train()
-        precision, recall, auc = hybrid_recommender.evaluate()
-        
-        print(f"\n{'Hybrid Performance':^80}")
+        precision, recall, hit_rate = hybrid_recommender.evaluate()
+
+        print(f"\n{'Hybrid Performance (held-out evaluation)':^80}")
         print("-" * 80)
-        print(f"Precision@5: {precision:.4f} {'✅' if precision > 0.25 else '⚠️'} (Target: > 0.25)")
-        print(f"Recall@5: {recall:.4f} {'✅' if recall > 0.30 else '⚠️'} (Target: > 0.30)")
-        print(f"AUC: {auc:.4f} {'✅' if auc > 0.85 else '⚠️'} (Target: > 0.85)")
+        print(f"Precision@5: {precision:.4f} {'✅' if precision > 0.10 else '⚠️'} (Target: > 0.10)")
+        print(f"Recall@5: {recall:.4f} {'✅' if recall > 0.15 else '⚠️'} (Target: > 0.15)")
+        print(f"HitRate@5: {hit_rate:.4f} {'✅' if hit_rate > 0.30 else '⚠️'} (Target: > 0.30)")
         print("-" * 80)
     else:
         hybrid_recommender = None
-        precision = recall = auc = 0.0
+        precision = recall = hit_rate = 0.0
     
     # ═══════════════════════════════════════════════════════════════════
     # 6. EVALUATION
@@ -159,7 +155,7 @@ def main():
         hybrid_metrics = evaluator.evaluate_hybrid(hybrid_recommender)
     
     evaluator.compare_models()
-    evaluator.generate_report('evaluation_report_FINAL.txt')
+    evaluator.generate_report('evaluation_report.txt')
      
      # ═══════════════════════════════════════════════════════════════════
     # STEP 6: VISUALIZATION
@@ -194,33 +190,30 @@ def main():
     print(f"{'Hybrid Model':<30} {'Combined':<25} {len(products_full):>14,}")
     print("=" * 80)
     
-    print(f"\n{'Before vs After Optimization':^80}")
+    # Note: this run compares against a fixed baseline captured from an
+    # earlier CF-only run (data/methodology unchanged for RMSE/MAE, so this
+    # comparison is valid). The hybrid Precision/Recall figures from earlier
+    # runs are NOT comparable here: the evaluation methodology itself changed
+    # (see HybridRecommender.evaluate) from a formula that was guaranteed to
+    # return 0 to a real held-out test, so there is no valid "before" to
+    # compare the new numbers against.
+    baseline_rmse, baseline_mae = 3.56, 3.38
+    print(f"\n{'CF Model vs Earlier Baseline Run':^80}")
     print("=" * 80)
-    print(f"{'Metric':<20} {'Before':>15} {'After':>15} {'Improvement':>15}")
+    print(f"{'Metric':<20} {'Baseline':>15} {'This Run':>15} {'Change':>15}")
     print("-" * 80)
-    print(f"{'RMSE':<20} {3.56:>15.2f} {rmse:>15.2f} {(3.56-rmse)/3.56*100:>14.1f}%")
-    print(f"{'MAE':<20} {3.38:>15.2f} {mae:>15.2f} {(3.38-mae)/3.38*100:>14.1f}%")
-    
-    if hybrid_recommender:
-        print(f"{'Precision@5':<20} {0.15:>15.2f} {precision:>15.2f} {(precision-0.15)/0.15*100:>14.1f}%")
-        print(f"{'Recall@5':<20} {0.20:>15.2f} {recall:>15.2f} {(recall-0.20)/0.20*100:>14.1f}%")
-        print(f"{'AUC':<20} {0.82:>15.2f} {auc:>15.2f} {(auc-0.82)/0.82*100:>14.1f}%")
-    
+    print(f"{'RMSE':<20} {baseline_rmse:>15.2f} {rmse:>15.2f} {(baseline_rmse-rmse)/baseline_rmse*100:>14.1f}%")
+    print(f"{'MAE':<20} {baseline_mae:>15.2f} {mae:>15.2f} {(baseline_mae-mae)/baseline_mae*100:>14.1f}%")
     print("=" * 80)
-    
-    # Calculate overall grade
-    if rmse < 1.2 and precision > 0.25 and auc > 0.85:
-        grade = "A (91%)"
-        status = "✅ PRODUCTION READY"
-    elif rmse < 1.5 and precision > 0.20:
-        grade = "B+ (87%)"
-        status = "✅ PORTFOLIO READY"
-    else:
-        grade = "B (83%)"
-        status = "✅ DEMO READY"
-    
-    print(f"\n{'Overall Grade:':<30} {grade}")
-    print(f"{'System Status:':<30} {status}")
+
+    # Honest pass/fail summary - no fallback branch that always reports success
+    cf_ok = rmse < 1.2 and mae < 1.0
+    hybrid_ok = hybrid_recommender is not None and (precision > 0.10 or hit_rate > 0.30)
+
+    print(f"\n{'Checks':^80}")
+    print("=" * 80)
+    print(f"{'Collaborative filtering (RMSE < 1.2, MAE < 1.0)':<55} {'✅ PASS' if cf_ok else '❌ FAIL'}")
+    print(f"{'Hybrid model (Precision@5 > 0.10 or HitRate@5 > 0.30)':<55} {'✅ PASS' if hybrid_ok else '❌ FAIL'}")
     print("=" * 80)
     print(f"\nCompleted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("\n🚀 Run 'streamlit run app.py' to launch web interface!")

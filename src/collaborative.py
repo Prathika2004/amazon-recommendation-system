@@ -182,10 +182,10 @@ class CollaborativeFilteringRecommender:
         # Return the estimated rating (already in 1-5 scale!)
         return prediction.est
     
-    def get_top_n_recommendations(self, user_id, n=10, filter_already_rated=True):
+    def get_top_n_recommendations(self, user_id, n=10, filter_already_rated=True, unhide_items=None):
         """
         Get top N recommendations for a user
-        
+
         Parameters:
         -----------
         user_id : str
@@ -194,7 +194,11 @@ class CollaborativeFilteringRecommender:
             Number of recommendations to return
         filter_already_rated : bool
             Whether to exclude items user has already rated
-        
+        unhide_items : set, optional
+            Items to keep eligible even though the user rated them (used by
+            held-out evaluation, so a rated-but-held-out item can still be
+            recommended and checked against)
+
         Returns:
         --------
         list of tuples: [(product_id, predicted_rating), ...]
@@ -202,18 +206,20 @@ class CollaborativeFilteringRecommender:
         # Retrain on full dataset if not already done
         if self.model.trainset != self.full_trainset:
             self.model.fit(self.full_trainset)
-        
+
         # Get all items
         all_items = [iid for iid in self.item_mapping.keys()]
-        
+
         # Get items user has already rated
         if filter_already_rated:
             try:
                 user_inner_id = self.full_trainset.to_inner_uid(user_id)
                 rated_items = [
-                    self.full_trainset.to_raw_iid(iid) 
+                    self.full_trainset.to_raw_iid(iid)
                     for (iid, _) in self.full_trainset.ur[user_inner_id]
                 ]
+                if unhide_items:
+                    rated_items = [iid for iid in rated_items if iid not in unhide_items]
                 # Filter out rated items
                 candidate_items = [iid for iid in all_items if iid not in rated_items]
             except ValueError:
